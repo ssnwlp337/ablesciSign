@@ -2,43 +2,60 @@ name: AbleSci Auto Sign
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ablesci.py
+      - requirements.txt
+      - .github/workflows/ablesciSign.yml
   schedule:
-    - cron: '40 13,23 * * *'  # UTC时间(北京时间为21:40和次日7:40)
+    - cron: '40 13,23 * * *' # 北京时间每日 07:40、21:40
+    - cron: '17 2 1 * *' # 每月更新活动，避免公开仓库因闲置停用定时任务
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ablesci-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   sign:
-    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' || github.event.schedule != '17 2 1 * *'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          python-version: '3.10'
-          cache: 'pip'
-
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+          cache: pip
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
+        run: python -m pip install -r requirements.txt
       - name: Run AbleSci Sign
-        id: sign
-        run: |
-          python ablesci.py > output.log
-          LOG_CONTENT=$(cat output.log)
-          echo "LOG_CONTENT<<EOF" >> $GITHUB_ENV
-          echo "$LOG_CONTENT" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+        run: python -u ablesci.py
         env:
-          GITHUB_ACTIONS: true
           ABLESCI_ACCOUNTS: ${{ secrets.ABLESCI_ACCOUNTS }}
-          # 选择一种通知服务
-          # SCKEY: ${{ secrets.SCKEY }}          # Server酱
-          # XZKEY: ${{ secrets.XZKEY }}        # 息知 (按需启用)
-          PUSH_PLUS_TOKEN: ${{ secrets.PUSH_PLUS_TOKEN }} # PushPlus (按需启用)
+          PUSH_PLUS_TOKEN: ${{ secrets.PUSH_PLUS_TOKEN }}
 
-      - name: Display Log
+  maintain-schedule:
+    if: github.event_name == 'schedule' && github.event.schedule == '17 2 1 * *'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Record monthly activity
         run: |
-          echo "$LOG_CONTENT"
+          date -u +%Y-%m-%dT%H:%M:%SZ > .github/last-activity.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/last-activity.txt
+          git commit -m 'chore: record monthly schedule activity'
+          git push origin HEAD:main
